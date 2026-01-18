@@ -55,12 +55,19 @@ jobs:
     - name: Tag and Push Image
       run: |
         IMAGE=${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}
-
-        podman tag ${{ env.APP_NAME }}:latest $IMAGE:latest
-        podman tag ${{ env.APP_NAME }}:${{ github.sha }} $IMAGE:${{ github.sha }}
-
+        SHA=${{ github.sha }}
+    
+        # Verify what exists
+        podman images | grep ${{ env.APP_NAME }}
+    
+        # Tag SHA image explicitly as latest
+        podman tag ${{ env.APP_NAME }}:$SHA $IMAGE:$SHA
+        podman tag ${{ env.APP_NAME }}:$SHA $IMAGE:latest
+    
+        # Push
+        podman push $IMAGE:$SHA
         podman push $IMAGE:latest
-        podman push $IMAGE:${{ github.sha }}
+
 
     # -----------------------------
     # Login to OpenShift
