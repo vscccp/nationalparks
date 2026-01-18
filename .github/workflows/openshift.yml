@@ -38,6 +38,8 @@ jobs:
     - name: S2I Build 
       id: build_image
       uses: redhat-actions/s2i-build@v2
+      env:
+        DOCKER_HOST: ""
       with:
         path_context: '.'
         builder_image: 'registry.access.redhat.com/ubi8/openjdk-11'
