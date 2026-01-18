@@ -24,60 +24,27 @@ jobs:
 
     steps:
     # -----------------------------
-    # Checkout
+    # Checkout source
     # -----------------------------
     - name: Checkout source
       uses: actions/checkout@v3
 
     # -----------------------------
-    # Build with S2I (Podman)
+    # Build with S2I and push directly to GHCR
     # -----------------------------
-    - name: S2I Build
+    - name: S2I Build & Push
       id: s2i
       uses: redhat-actions/s2i-build@v2
-      env:
-        DOCKER_HOST: ""
       with:
         path_context: .
         builder_image: registry.access.redhat.com/ubi8/openjdk-11
-        image: ${{ env.APP_NAME }}
+        image: ${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}
         tags: |
           ${{ github.sha }}
-
-    # -----------------------------
-    # Login to GHCR
-    # -----------------------------
-    - name: Login to GHCR
-      run: |
-        echo "${REGISTRY_PASSWORD}" | podman login ghcr.io \
-          -u "${REGISTRY_USER}" \
-          --password-stdin
-
-    # -----------------------------
-    # Push EXACT S2I image (no guessing)
-    # -----------------------------
-    - name: Push image to GHCR
-      env:
-        LOCAL_IMAGE: ${{ steps.s2i.outputs.image }}
-        LOCAL_TAGS: ${{ steps.s2i.outputs.tags }}
-        REMOTE_IMAGE: ghcr.io/${{ github.repository_owner }}/nationalparks
-      run: |
-        set -e
-
-        echo "S2I produced image:"
-        echo "  Image: $LOCAL_IMAGE"
-        echo "  Tags:  $LOCAL_TAGS"
-
-        for TAG in $LOCAL_TAGS; do
-          echo "Tagging and pushing $TAG"
-          podman tag $LOCAL_IMAGE:$TAG $REMOTE_IMAGE:$TAG
-          podman push $REMOTE_IMAGE:$TAG
-        done
-
-        # Also publish latest explicitly
-        FIRST_TAG=$(echo "$LOCAL_TAGS" | head -n1)
-        podman tag $LOCAL_IMAGE:$FIRST_TAG $REMOTE_IMAGE:latest
-        podman push $REMOTE_IMAGE:latest
+          latest
+        registry: ghcr.io
+        username: ${{ env.REGISTRY_USER }}
+        password: ${{ env.REGISTRY_PASSWORD }}
 
     # -----------------------------
     # Login to OpenShift
@@ -94,14 +61,14 @@ jobs:
     # Deploy to OpenShift
     # -----------------------------
     - name: Deploy to OpenShift
-      env:
-        IMAGE: ghcr.io/${{ github.repository_owner }}/nationalparks:${{ github.sha }}
       run: |
-        set -e
+        IMAGE=${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }}
 
         if oc get deployment ${APP_NAME} >/dev/null 2>&1; then
+          echo "Updating existing deployment..."
           oc set image deployment/${APP_NAME} ${APP_NAME}=$IMAGE
         else
+          echo "Creating new application..."
           oc new-app $IMAGE \
             --name=${APP_NAME} \
             --port=${APP_PORT}
