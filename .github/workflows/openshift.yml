@@ -5,7 +5,7 @@ env:
   REGISTRY_USER: ${{ github.actor }}
   REGISTRY_PASSWORD: ${{ github.token }}
   APP_NAME: nationalparks
-  IMAGE_TAGS: latest ${{ github.sha }}
+  IMAGE_TAGS: latest,${{ github.sha }}
 
   OPENSHIFT_SERVER: ${{ secrets.OPENSHIFT_SERVER }}
   OPENSHIFT_TOKEN: ${{ secrets.OPENSHIFT_TOKEN }}
