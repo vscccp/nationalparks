@@ -1,74 +1,66 @@
-name: OpenShift
+name: Build and deploy nationalparks
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
 
 env:
-  APP_NAME: nationalparks
   IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
   REGISTRY_USER: ${{ github.actor }}
   REGISTRY_PASSWORD: ${{ github.token }}
+  APP_NAME: nationalparks
+  IMAGE_TAG: ${{ github.sha }}
+  OPENSHIFT_NAMESPACE: joebiden1738-dev
   APP_PORT: "8080"
 
 jobs:
-  build-push-deploy:
+  build-and-deploy:
     runs-on: ubuntu-22.04
-    environment: development   # <--- use your GitHub environment
-
-    name: Build, Push, Deploy
-
     steps:
-    # -----------------------------
-    # Checkout source
-    # -----------------------------
-    - name: Checkout source
+
+    - name: Checkout repo
       uses: actions/checkout@v3
 
-    # -----------------------------
-    # Build & push with S2I
-    # -----------------------------
-    - name: S2I Build & Push
-      id: s2i
+    - name: Build image with S2I (latest)
       uses: redhat-actions/s2i-build@v2
       with:
         path_context: .
         builder_image: registry.access.redhat.com/ubi8/openjdk-11
-        image: ${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}
-        tags: |
-          ${{ github.sha }}
-          latest
-        registry: ghcr.io
-        username: ${{ env.REGISTRY_USER }}
-        password: ${{ env.REGISTRY_PASSWORD }}
+        image: ${{ env.APP_NAME }}
+        tags: latest
 
-    # -----------------------------
-    # Login to OpenShift using environment secrets
-    # -----------------------------
+    - name: Tag image with SHA
+      run: |
+        podman tag ${{ env.APP_NAME }}:latest ${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}:${{ env.IMAGE_TAG }}
+
+    - name: Login to GHCR
+      run: |
+        echo ${{ env.REGISTRY_PASSWORD }} | podman login ghcr.io -u ${{ env.REGISTRY_USER }} --password-stdin
+
+    - name: Push images to GHCR
+      run: |
+        podman push ${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}:latest
+        podman push ${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}:${{ env.IMAGE_TAG }}
+
     - name: Login to OpenShift
       uses: redhat-actions/oc-login@v1
       with:
         openshift_server_url: ${{ secrets.OPENSHIFT_SERVER }}
         openshift_token: ${{ secrets.OPENSHIFT_TOKEN }}
+        namespace: ${{ env.OPENSHIFT_NAMESPACE }}
         insecure_skip_tls_verify: true
-        namespace: ${{ secrets.OPENSHIFT_NAMESPACE }}
 
-    # -----------------------------
-    # Deploy to OpenShift
-    # -----------------------------
-    - name: Deploy to OpenShift
+    - name: Ensure pull secret exists
       run: |
-        IMAGE=${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }}
-
-        if oc get deployment ${APP_NAME} >/dev/null 2>&1; then
-          echo "Updating existing deployment..."
-          oc set image deployment/${APP_NAME} ${APP_NAME}=$IMAGE
-        else
-          echo "Creating new application..."
-          oc new-app $IMAGE \
-            --name=${APP_NAME} \
-            --port=${APP_PORT}
+        if ! oc get secret ghcr-pull-secret -n ${{ env.OPENSHIFT_NAMESPACE }}; then
+          oc create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username=${{ env.REGISTRY_USER }} \
+            --docker-password=${{ env.REGISTRY_PASSWORD }} \
+            --docker-email=fakeemail123@example.com \
+            -n ${{ env.OPENSHIFT_NAMESPACE }}
+          oc secrets link default ghcr-pull-secret --for=pull -n ${{ env.OPENSHIFT_NAMESPACE }}
         fi
 
-        oc rollout status deployment/${APP_NAME}
+    - name: Deploy to OpenShift
+      run: |
