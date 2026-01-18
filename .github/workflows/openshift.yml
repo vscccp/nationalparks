@@ -53,20 +53,23 @@ jobs:
             --password-stdin
 
     - name: Tag and Push Image
+      env:
+        IMAGE: ghcr.io/${{ github.repository_owner }}/nationalparks
+        SHA: ${{ github.sha }}
       run: |
-        IMAGE=${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}
-        SHA=${{ github.sha }}
+        set -euxo pipefail
     
-        # Verify what exists
-        podman images | grep ${{ env.APP_NAME }}
+        echo "Local images:"
+        podman images | grep nationalparks
     
-        # Tag SHA image explicitly as latest
-        podman tag ${{ env.APP_NAME }}:$SHA $IMAGE:$SHA
-        podman tag ${{ env.APP_NAME }}:$SHA $IMAGE:latest
+        # Tag from the SHA image (this always exists)
+        podman tag nationalparks:$SHA $IMAGE:$SHA
+        podman tag nationalparks:$SHA $IMAGE:latest
     
         # Push
         podman push $IMAGE:$SHA
         podman push $IMAGE:latest
+
 
 
     # -----------------------------
