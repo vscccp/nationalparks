@@ -1,5 +1,10 @@
 name: OpenShift
 
+on:
+  push:
+    branches:
+      - master
+
 env:
   APP_NAME: nationalparks
   IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
@@ -12,25 +17,22 @@ env:
 
   APP_PORT: "8080"
 
-on:
-  push:
-    branches:
-      - master
-
 jobs:
   build-push-deploy:
-    name: Build, Push, and Deploy to OpenShift
     runs-on: ubuntu-22.04
+    name: Build, Push, Deploy
 
     steps:
+    # -----------------------------
+    # Checkout
+    # -----------------------------
     - name: Checkout source
       uses: actions/checkout@v3
 
     # -----------------------------
-    # Build image with S2I (Podman)
+    # Build with S2I (Podman only)
     # -----------------------------
-    - name: S2I Build (Podman)
-      id: build_image
+    - name: S2I Build
       uses: redhat-actions/s2i-build@v2
       env:
         DOCKER_HOST: ""
@@ -39,38 +41,37 @@ jobs:
         builder_image: registry.access.redhat.com/ubi8/openjdk-11
         image: ${{ env.APP_NAME }}
         tags: |
-          latest
           ${{ github.sha }}
 
     # -----------------------------
-    # Push image to GHCR (Podman)
+    # Login to GHCR (Podman)
     # -----------------------------
-    - name: Login to GitHub Container Registry
+    - name: Login to GHCR
       run: |
-        echo "${{ env.REGISTRY_PASSWORD }}" | \
-          podman login ghcr.io \
-            -u "${{ env.REGISTRY_USER }}" \
-            --password-stdin
+        echo "${REGISTRY_PASSWORD}" | podman login ghcr.io \
+          -u "${REGISTRY_USER}" \
+          --password-stdin
 
+    # -----------------------------
+    # Tag & Push (bullet-proof)
+    # -----------------------------
     - name: Tag and Push Image
       env:
-        IMAGE: ghcr.io/${{ github.repository_owner }}/nationalparks
         SHA: ${{ github.sha }}
+        IMAGE: ghcr.io/${{ github.repository_owner }}/nationalparks
       run: |
-        set -euxo pipefail
-    
-        echo "Local images:"
-        podman images | grep nationalparks
-    
-        # Tag from the SHA image (this always exists)
+        set -e
+
+        echo "Available local images:"
+        podman images
+
+        echo "Tagging SHA image as remote tags..."
         podman tag nationalparks:$SHA $IMAGE:$SHA
         podman tag nationalparks:$SHA $IMAGE:latest
-    
-        # Push
+
+        echo "Pushing images..."
         podman push $IMAGE:$SHA
         podman push $IMAGE:latest
-
-
 
     # -----------------------------
     # Login to OpenShift
@@ -84,19 +85,22 @@ jobs:
         namespace: ${{ env.OPENSHIFT_NAMESPACE }}
 
     # -----------------------------
-    # Deploy / Update application
+    # Deploy / Update App
     # -----------------------------
     - name: Deploy to OpenShift
+      env:
+        IMAGE: ghcr.io/${{ github.repository_owner }}/nationalparks:${{ github.sha }}
       run: |
-        IMAGE=${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }}
+        set -e
 
-        if oc get deployment ${{ env.APP_NAME }} >/dev/null 2>&1; then
-          oc set image deployment/${{ env.APP_NAME }} \
-            ${{ env.APP_NAME }}=$IMAGE
+        if oc get deployment ${APP_NAME} >/dev/null 2>&1; then
+          echo "Updating existing deployment..."
+          oc set image deployment/${APP_NAME} ${APP_NAME}=$IMAGE
         else
+          echo "Creating new application..."
           oc new-app $IMAGE \
-            --name=${{ env.APP_NAME }} \
-            --port=${{ env.APP_PORT }}
+            --name=${APP_NAME} \
+            --port=${APP_PORT}
         fi
 
-        oc rollout status deployment/${{ env.APP_NAME }}
+        oc rollout status deployment/${APP_NAME}
