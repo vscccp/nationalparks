@@ -10,16 +10,13 @@ env:
   IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
   REGISTRY_USER: ${{ github.actor }}
   REGISTRY_PASSWORD: ${{ github.token }}
-
-  OPENSHIFT_SERVER: ${{ secrets.OPENSHIFT_SERVER }}
-  OPENSHIFT_TOKEN: ${{ secrets.OPENSHIFT_TOKEN }}
-  OPENSHIFT_NAMESPACE: "%PROJECT%"
-
   APP_PORT: "8080"
 
 jobs:
   build-push-deploy:
     runs-on: ubuntu-22.04
+    environment: development   # <--- use your GitHub environment
+
     name: Build, Push, Deploy
 
     steps:
@@ -30,7 +27,7 @@ jobs:
       uses: actions/checkout@v3
 
     # -----------------------------
-    # Build with S2I and push directly to GHCR
+    # Build & push with S2I
     # -----------------------------
     - name: S2I Build & Push
       id: s2i
@@ -47,15 +44,15 @@ jobs:
         password: ${{ env.REGISTRY_PASSWORD }}
 
     # -----------------------------
-    # Login to OpenShift
+    # Login to OpenShift using environment secrets
     # -----------------------------
     - name: Login to OpenShift
       uses: redhat-actions/oc-login@v1
       with:
-        openshift_server_url: ${{ env.OPENSHIFT_SERVER }}
-        openshift_token: ${{ env.OPENSHIFT_TOKEN }}
+        openshift_server_url: ${{ secrets.OPENSHIFT_SERVER }}
+        openshift_token: ${{ secrets.OPENSHIFT_TOKEN }}
         insecure_skip_tls_verify: true
-        namespace: ${{ env.OPENSHIFT_NAMESPACE }}
+        namespace: ${{ secrets.OPENSHIFT_NAMESPACE }}
 
     # -----------------------------
     # Deploy to OpenShift
