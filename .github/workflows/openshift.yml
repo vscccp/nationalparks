@@ -1,12 +1,10 @@
-name: OpenShift 
+name: OpenShift
 
-env: 
+env:
+  APP_NAME: nationalparks
   IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
   REGISTRY_USER: ${{ github.actor }}
   REGISTRY_PASSWORD: ${{ github.token }}
-  APP_NAME: nationalparks
-  IMAGE_TAGS: |
-    latest ${{ github.sha }}
 
   OPENSHIFT_SERVER: ${{ secrets.OPENSHIFT_SERVER }}
   OPENSHIFT_TOKEN: ${{ secrets.OPENSHIFT_TOKEN }}
@@ -15,54 +13,59 @@ env:
   APP_PORT: "8080"
 
 on:
-  # https://docs.github.com/en/free-pro-team@latest/actions/reference/events-that-trigger-workflows
-  push: 
-    branches: [ master ]
+  push:
+    branches:
+      - master
 
 jobs:
-  build-and-push: 
-    name: Build and push to github container registry
+  build-push-deploy:
+    name: Build, Push, and Deploy to OpenShift
     runs-on: ubuntu-22.04
-    environment: development
-
-    outputs:
-        ROUTE: ${{ steps.deploy-and-expose.outputs.route }}
-        SELECTOR: ${{ steps.deploy-and-expose.outputs.selector }}
 
     steps:
-    - name: Checkout
-      id: checkout
-      uses: actions/checkout@v2
+    - name: Checkout source
+      uses: actions/checkout@v3
 
-   # https://github.com/redhat-actions/s2i-build#readme
-    - name: S2I Build 
+    # -----------------------------
+    # Build image with S2I (Podman)
+    # -----------------------------
+    - name: S2I Build (Podman)
       id: build_image
       uses: redhat-actions/s2i-build@v2
       env:
         DOCKER_HOST: ""
       with:
-        path_context: '.'
-        builder_image: 'registry.access.redhat.com/ubi8/openjdk-11'
+        path_context: .
+        builder_image: registry.access.redhat.com/ubi8/openjdk-11
         image: ${{ env.APP_NAME }}
-        tags: ${{ env.IMAGE_TAGS }}
+        tags: |
+          latest
+          ${{ github.sha }}
 
-    # https://github.com/redhat-actions/push-to-registry#readme
-    - name: Push to Registry 
-      id: push-to-registry
-      uses: redhat-actions/push-to-registry@v2
-      env:
-        DOCKER_HOST: ""
-      with:
-        image: ${{ steps.build_image.outputs.image }}
-        tags: ${{ steps.build_image.outputs.tags }}
-        registry: ${{ env.IMAGE_REGISTRY }}
-        username: ${{ env.REGISTRY_USER }}
-        password: ${{ env.REGISTRY_PASSWORD }}
+    # -----------------------------
+    # Push image to GHCR (Podman)
+    # -----------------------------
+    - name: Login to GitHub Container Registry
+      run: |
+        echo "${{ env.REGISTRY_PASSWORD }}" | \
+          podman login ghcr.io \
+            -u "${{ env.REGISTRY_USER }}" \
+            --password-stdin
 
-    # The path the image was pushed to is now stored in ${{ steps.push-to-registry.outputs.registry-path }}
+    - name: Tag and Push Image
+      run: |
+        IMAGE=${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}
 
-    # https://github.com/redhat-actions/oc-login#readme
-    - name: Log in to OpenShift 
+        podman tag ${{ env.APP_NAME }}:latest $IMAGE:latest
+        podman tag ${{ env.APP_NAME }}:${{ github.sha }} $IMAGE:${{ github.sha }}
+
+        podman push $IMAGE:latest
+        podman push $IMAGE:${{ github.sha }}
+
+    # -----------------------------
+    # Login to OpenShift
+    # -----------------------------
+    - name: Login to OpenShift
       uses: redhat-actions/oc-login@v1
       with:
         openshift_server_url: ${{ env.OPENSHIFT_SERVER }}
@@ -70,6 +73,20 @@ jobs:
         insecure_skip_tls_verify: true
         namespace: ${{ env.OPENSHIFT_NAMESPACE }}
 
-    # Run a script to create a new app or update the current one with the previously pushed container image
-    - run: | 
-         "${GITHUB_WORKSPACE}/.github/script.sh" ${{ env.APP_NAME }} ${{ env.IMAGE_REGISTRY }}/${{ steps.build_image.outputs.image }}:${{ github.sha }} ${{ env.OPENSHIFT_NAMESPACE }}
+    # -----------------------------
+    # Deploy / Update application
+    # -----------------------------
+    - name: Deploy to OpenShift
+      run: |
+        IMAGE=${{ env.IMAGE_REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }}
+
+        if oc get deployment ${{ env.APP_NAME }} >/dev/null 2>&1; then
+          oc set image deployment/${{ env.APP_NAME }} \
+            ${{ env.APP_NAME }}=$IMAGE
+        else
+          oc new-app $IMAGE \
+            --name=${{ env.APP_NAME }} \
+            --port=${{ env.APP_PORT }}
+        fi
+
+        oc rollout status deployment/${{ env.APP_NAME }}
